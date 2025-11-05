@@ -1390,6 +1390,9 @@ pub enum Expr {
     Lambda(LambdaFunction),
     /// Checks membership of a value in a JSON array
     MemberOf(MemberOf),
+    // An empty expression, used as a temporary solution to return an expression when parsing a list
+    // and a trailing comma is ued.
+    Empty,
 }
 
 impl Expr {
@@ -2234,6 +2237,7 @@ impl fmt::Display for Expr {
             Expr::Prior(expr) => write!(f, "PRIOR {expr}"),
             Expr::Lambda(lambda) => write!(f, "{lambda}"),
             Expr::MemberOf(member_of) => write!(f, "{member_of}"),
+            Expr::Empty => Ok(()),
         }
     }
 }

@@ -1682,6 +1682,7 @@ impl Spanned for Expr {
             Expr::Prior(expr) => expr.span(),
             Expr::Lambda(_) => Span::empty(),
             Expr::MemberOf(member_of) => member_of.value.span().union(&member_of.array.span()),
+            Expr::Empty => Span::empty(),
         }
     }
 }
@@ -2306,6 +2307,8 @@ impl Spanned for Select {
     fn span(&self) -> Span {
         let Select {
             select_token,
+            from_token,
+            where_token,
             optimizer_hints: _,
             distinct: _, // todo
             select_modifiers: _,
@@ -2332,21 +2335,28 @@ impl Spanned for Select {
         } = self;
 
         union_spans(
-            core::iter::once(select_token.0.span)
-                .chain(projection.iter().map(|item| item.span()))
-                .chain(into.iter().map(|item| item.span()))
-                .chain(from.iter().map(|item| item.span()))
-                .chain(lateral_views.iter().map(|item| item.span()))
-                .chain(prewhere.iter().map(|item| item.span()))
-                .chain(selection.iter().map(|item| item.span()))
-                .chain(connect_by.iter().map(|item| item.span()))
-                .chain(core::iter::once(group_by.span()))
-                .chain(cluster_by.iter().map(|item| item.span()))
-                .chain(distribute_by.iter().map(|item| item.span()))
-                .chain(sort_by.iter().map(|item| item.span()))
-                .chain(having.iter().map(|item| item.span()))
-                .chain(named_window.iter().map(|item| item.span()))
-                .chain(qualify.iter().map(|item| item.span())),
+            core::iter::once(
+                select_token
+                    .as_ref()
+                    .map(|item| item.0.span)
+                    .unwrap_or(Span::empty()),
+            )
+            .chain(from_token.iter().map(|item| item.0.span))
+            .chain(where_token.iter().map(|item| item.0.span))
+            .chain(projection.iter().map(|item| item.span()))
+            .chain(into.iter().map(|item| item.span()))
+            .chain(from.iter().map(|item| item.span()))
+            .chain(lateral_views.iter().map(|item| item.span()))
+            .chain(prewhere.iter().map(|item| item.span()))
+            .chain(selection.iter().map(|item| item.span()))
+            .chain(connect_by.iter().map(|item| item.span()))
+            .chain(core::iter::once(group_by.span()))
+            .chain(cluster_by.iter().map(|item| item.span()))
+            .chain(distribute_by.iter().map(|item| item.span()))
+            .chain(sort_by.iter().map(|item| item.span()))
+            .chain(having.iter().map(|item| item.span()))
+            .chain(named_window.iter().map(|item| item.span()))
+            .chain(qualify.iter().map(|item| item.span())),
         )
     }
 }

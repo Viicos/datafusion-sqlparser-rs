@@ -444,7 +444,11 @@ impl SelectModifiers {
 #[cfg_attr(feature = "visitor", visit(with = "visit_select"))]
 pub struct Select {
     /// Token for the `SELECT` keyword
-    pub select_token: AttachedToken,
+    pub select_token: Option<AttachedToken>,
+    /// Token for the `FROM` keyword
+    pub from_token: Option<AttachedToken>,
+    /// Token for the `WHERE` keyword
+    pub where_token: Option<AttachedToken>,
     /// Query optimizer hints
     ///
     /// [MySQL](https://dev.mysql.com/doc/refman/8.4/en/optimizer-hints.html)
@@ -452,6 +456,7 @@ pub struct Select {
     pub optimizer_hints: Vec<OptimizerHint>,
     /// `SELECT [DISTINCT] ...`
     pub distinct: Option<Distinct>,
+
     /// MySQL-specific SELECT modifiers.
     ///
     /// See [MySQL SELECT](https://dev.mysql.com/doc/refman/8.4/en/select.html).

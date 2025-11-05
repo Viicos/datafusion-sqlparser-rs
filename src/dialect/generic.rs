@@ -154,7 +154,7 @@ impl Dialect for GenericDialect {
     }
 
     fn supports_projection_trailing_commas(&self) -> bool {
-        true
+        false
     }
 
     fn supports_asc_desc_in_column_definition(&self) -> bool {

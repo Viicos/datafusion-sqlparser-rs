@@ -286,6 +286,8 @@ pub enum Token {
     /// This is used to represent any custom binary operator that is not part of the SQL standard.
     /// PostgreSQL allows defining custom binary operators using CREATE OPERATOR.
     CustomBinaryOperator(String),
+    /// An unknown token (used when a tokenizer error is encounted).
+    Unknown(TokenizerError),
 }
 
 impl fmt::Display for Token {
@@ -396,6 +398,7 @@ impl fmt::Display for Token {
             Token::QuestionAnd => write!(f, "?&"),
             Token::QuestionPipe => write!(f, "?|"),
             Token::CustomBinaryOperator(s) => f.write_str(s),
+            Token::Unknown(_) => f.write_str("Unknown"),
         }
     }
 }
@@ -785,18 +788,34 @@ impl fmt::Display for TokenWithSpan {
     }
 }
 
+#[derive(Debug, Clone, PartialOrd, Ord, Hash, PartialEq, Eq)]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum TokenizerErrorType {
+    UnclosedStringError(String),
+    UnexpectedTokenError(char),
+    OtherError(String),
+}
+
 /// An error reported by the tokenizer, with a human-readable `message` and a `location`.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct TokenizerError {
     /// A descriptive error message.
-    pub message: String,
+    pub error: TokenizerErrorType,
     /// The `Location` where the error was detected.
     pub location: Location,
 }
 
 impl fmt::Display for TokenizerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}", self.message, self.location,)
+        match &self.error {
+            TokenizerErrorType::UnclosedStringError(_) | TokenizerErrorType::OtherError(_) => {
+                write!(f, "Missing closing quote")
+            }
+            TokenizerErrorType::UnexpectedTokenError(t) => {
+                write!(f, "Unexpected token {}", t)
+            }
+        }
     }
 }
 
@@ -863,6 +882,12 @@ struct TokenizeQuotedStringSettings {
     /// True if the string uses backslash escaping of special characters
     /// e.g `'abc\ndef\'ghi'
     backslash_escape: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenizedResult {
+    pub tokens: Vec<TokenWithSpan>,
+    pub errors: Vec<TokenizerError>,
 }
 
 /// SQL Tokenizer
@@ -942,25 +967,39 @@ impl<'a> Tokenizer<'a> {
 
     /// Tokenize the statement and produce a vector of tokens with location information
     pub fn tokenize_with_location(&mut self) -> Result<Vec<TokenWithSpan>, TokenizerError> {
+        let tokenized_result = self.tokenize_with_location_with_errors();
+        if let Some(e) = tokenized_result.errors.first() {
+            Err(e.to_owned())
+        } else {
+            Ok(tokenized_result.tokens)
+        }
+    }
+
+    pub fn tokenize_with_location_with_errors(&mut self) -> TokenizedResult {
         let mut tokens: Vec<TokenWithSpan> = vec![];
-        self.tokenize_with_location_into_buf(&mut tokens)
-            .map(|_| tokens)
+        let mut errors: Vec<TokenizerError> = vec![];
+
+        self.tokenize_with_location_with_errors_into_buf(&mut tokens, &mut errors);
+
+        TokenizedResult { tokens, errors }
     }
 
     /// Tokenize the statement and append tokens with location information into the provided buffer.
     /// If an error is thrown, the buffer will contain all tokens that were successfully parsed before the error.
-    pub fn tokenize_with_location_into_buf(
+    pub fn tokenize_with_location_with_errors_into_buf(
         &mut self,
         buf: &mut Vec<TokenWithSpan>,
+        errors: &mut Vec<TokenizerError>,
     ) -> Result<(), TokenizerError> {
-        self.tokenize_with_location_into_buf_with_mapper(buf, |token| token)
+        self.tokenize_with_location_into_buf_with_errors_with_mapper(buf, errors, |token| token)
     }
 
     /// Tokenize the statement and produce a vector of tokens, mapping each token
     /// with provided `mapper`
-    pub fn tokenize_with_location_into_buf_with_mapper(
+    pub fn tokenize_with_location_into_buf_with_errors_with_mapper(
         &mut self,
         buf: &mut Vec<TokenWithSpan>,
+        errors: &mut Vec<TokenizerError>,
         mut mapper: impl FnMut(TokenWithSpan) -> TokenWithSpan,
     ) -> Result<(), TokenizerError> {
         let mut state = State {
@@ -970,7 +1009,13 @@ impl<'a> Tokenizer<'a> {
         };
 
         let mut location = state.location();
-        while let Some(token) = self.next_token(&mut state, buf.last().map(|t| &t.token))? {
+        while let Some(token) = self
+            .next_token(&mut state, buf.last().map(|t| &t.token))
+            .unwrap_or_else(|e| {
+                errors.push(e.clone());
+                Some(Token::Unknown(e))
+            })
+        {
             let span = location.span_to(state.location());
 
             // Check if this is a multiline comment hint that should be expanded
@@ -1303,7 +1348,9 @@ impl<'a> Tokenizer<'a> {
                     else {
                         return self.tokenizer_error(
                             chars.location(),
-                            format!("Expected nested delimiter '{quote_start}' before EOF."),
+                            TokenizerErrorType::OtherError(format!(
+                                "Expected nested delimiter '{quote_start}' before EOF."
+                            )),
                         );
                     };
 
@@ -1322,7 +1369,9 @@ impl<'a> Tokenizer<'a> {
                     if chars.peek() != Some(&nested_quote_start) {
                         return self.tokenizer_error(
                             error_loc,
-                            format!("Expected nested delimiter '{nested_quote_start}' before EOF."),
+                            TokenizerErrorType::OtherError(format!(
+                                "Expected nested delimiter '{nested_quote_start}' before EOF."
+                            )),
                         );
                     }
                     word.push(nested_quote_start.into());
@@ -1332,7 +1381,9 @@ impl<'a> Tokenizer<'a> {
                     if chars.peek() != Some(&quote_end) {
                         return self.tokenizer_error(
                             error_loc,
-                            format!("Expected close delimiter '{quote_end}' before EOF."),
+                            TokenizerErrorType::UnclosedStringError(format!(
+                                "Expected close delimiter '{quote_end}' before EOF."
+                            )),
                         );
                     }
                     chars.next(); // skip close delimiter
@@ -1356,7 +1407,7 @@ impl<'a> Tokenizer<'a> {
 
                         return self.tokenizer_error(
                             chars.location(),
-                            "Unexpected character '_'".to_string(),
+                            TokenizerErrorType::UnexpectedTokenError('_'),
                         );
                     }
 
@@ -1913,7 +1964,9 @@ impl<'a> Tokenizer<'a> {
             (None, Some(tok)) => Ok(Some(tok)),
             (None, None) => self.tokenizer_error(
                 chars.location(),
-                format!("Expected a valid binary operator after '{prefix}'"),
+                TokenizerErrorType::OtherError(format!(
+                    "Expected a valid binary operator after '{prefix}'"
+                )),
             ),
         }
     }
@@ -1951,7 +2004,10 @@ impl<'a> Tokenizer<'a> {
             }
 
             return if chars.peek().is_none() && !is_terminated {
-                self.tokenizer_error(chars.location(), "Unterminated dollar-quoted string")
+                self.tokenizer_error(
+                    chars.location(),
+                    TokenizerErrorType::OtherError("Unterminated dollar-quoted string".to_string()),
+                )
             } else {
                 Ok(Token::DollarQuotedString(DollarQuotedString {
                     value: s,
@@ -2008,7 +2064,9 @@ impl<'a> Tokenizer<'a> {
 
                             return self.tokenizer_error(
                                 chars.location(),
-                                "Unterminated dollar-quoted, expected $",
+                                TokenizerErrorType::OtherError(
+                                    "Unterminated dollar-quoted, expected $".to_string(),
+                                ),
                             );
                         }
                     }
@@ -2027,10 +2085,10 @@ impl<'a> Tokenizer<'a> {
     fn tokenizer_error<R>(
         &self,
         loc: Location,
-        message: impl Into<String>,
+        error: TokenizerErrorType,
     ) -> Result<R, TokenizerError> {
         Err(TokenizerError {
-            message: message.into(),
+            error,
             location: loc,
         })
     }
@@ -2069,7 +2127,9 @@ impl<'a> Tokenizer<'a> {
         } else {
             self.tokenizer_error(
                 error_loc,
-                format!("Expected close delimiter '{quote_end}' before EOF."),
+                TokenizerErrorType::OtherError(format!(
+                    "Expected close delimiter '{quote_end}' before EOF."
+                )),
             )
         }
     }
@@ -2084,7 +2144,12 @@ impl<'a> Tokenizer<'a> {
             return Ok(s);
         }
 
-        self.tokenizer_error(starting_loc, "Unterminated encoded string literal")
+        self.tokenizer_error(
+            starting_loc,
+            TokenizerErrorType::UnclosedStringError(
+                "Unterminated encoded string literal".to_string(),
+            ),
+        )
     }
 
     /// Reads a string literal quoted by a single or triple quote characters.
@@ -2120,7 +2185,12 @@ impl<'a> Tokenizer<'a> {
             }
             3 => {
                 let Some(num_quote_chars) = NonZeroU8::new(3) else {
-                    return self.tokenizer_error(error_loc, "invalid number of opening quotes");
+                    return self.tokenizer_error(
+                        error_loc,
+                        TokenizerErrorType::OtherError(
+                            "invalid number of opening quotes".to_string(),
+                        ),
+                    );
                 };
                 (
                     triple_quote_token,
@@ -2128,7 +2198,10 @@ impl<'a> Tokenizer<'a> {
                 )
             }
             _ => {
-                return self.tokenizer_error(error_loc, "invalid string literal opening");
+                return self.tokenizer_error(
+                    error_loc,
+                    TokenizerErrorType::OtherError("invalid string literal opening".to_string()),
+                );
             }
         };
 
@@ -2180,10 +2253,10 @@ impl<'a> Tokenizer<'a> {
             None | Some(' ') | Some('\t') | Some('\r') | Some('\n') => {
                 return self.tokenizer_error(
                     start_quote_loc,
-                    format!(
+                    TokenizerErrorType::OtherError(format!(
                         "Invalid space, tab, newline, or EOF after '{}''",
                         String::from_iter(literal_prefix)
-                    ),
+                    )),
                 );
             }
             Some(c) => (
@@ -2214,7 +2287,10 @@ impl<'a> Tokenizer<'a> {
             value.push(ch);
         }
 
-        self.tokenizer_error(literal_start_loc, "Unterminated string literal")
+        self.tokenizer_error(
+            literal_start_loc,
+            TokenizerErrorType::OtherError("Unterminated string literal".to_string()),
+        )
     }
 
     /// Read a quoted string.
@@ -2229,7 +2305,10 @@ impl<'a> Tokenizer<'a> {
         // Consume any opening quotes.
         for _ in 0..settings.num_opening_quotes_to_consume {
             if Some(settings.quote_style) != chars.next() {
-                return self.tokenizer_error(error_loc, "invalid string literal opening");
+                return self.tokenizer_error(
+                    error_loc,
+                    TokenizerErrorType::OtherError("invalid string literal opening".to_string()),
+                );
             }
         }
 
@@ -2321,7 +2400,10 @@ impl<'a> Tokenizer<'a> {
                 }
             }
         }
-        self.tokenizer_error(error_loc, "Unterminated string literal")
+        self.tokenizer_error(
+            error_loc,
+            TokenizerErrorType::UnclosedStringError("Unterminated string literal".to_string()),
+        )
     }
 
     fn tokenize_multiline_comment(
@@ -2354,7 +2436,9 @@ impl<'a> Tokenizer<'a> {
                 None => {
                     break self.tokenizer_error(
                         chars.location(),
-                        "Unexpected EOF while in a multi-line comment",
+                        TokenizerErrorType::OtherError(
+                            "Unexpected EOF while in a multi-line comment".to_string(),
+                        ),
                     );
                 }
             }
@@ -2607,7 +2691,9 @@ fn unescape_unicode_single_quoted_string(chars: &mut State<'_>) -> Result<String
         }
     }
     Err(TokenizerError {
-        message: "Unterminated unicode encoded string literal".to_string(),
+        error: TokenizerErrorType::UnclosedStringError(
+            "Unterminated unicode encoded string literal".to_string(),
+        ),
         location: chars.location(),
     })
 }
@@ -2619,18 +2705,21 @@ fn take_char_from_hex_digits(
     let mut result = 0u32;
     for _ in 0..max_digits {
         let next_char = chars.next().ok_or_else(|| TokenizerError {
-            message: "Unexpected EOF while parsing hex digit in escaped unicode string."
-                .to_string(),
+            error: TokenizerErrorType::OtherError(
+                "Unexpected EOF while parsing hex digit in escaped unicode string.".to_string(),
+            ),
             location: chars.location(),
         })?;
         let digit = next_char.to_digit(16).ok_or_else(|| TokenizerError {
-            message: format!("Invalid hex digit in escaped unicode string: {next_char}"),
+            error: TokenizerErrorType::OtherError(format!(
+                "Invalid hex digit in escaped unicode string: {next_char}"
+            )),
             location: chars.location(),
         })?;
         result = result * 16 + digit;
     }
     char::from_u32(result).ok_or_else(|| TokenizerError {
-        message: format!("Invalid unicode character: {result:x}"),
+        error: TokenizerErrorType::OtherError(format!("Invalid unicode character: {result:x}")),
         location: chars.location(),
     })
 }
@@ -2646,9 +2735,17 @@ mod tests {
     use core::fmt::Debug;
 
     #[test]
+    fn test_tmp() {
+        let dialect = GenericDialect {};
+        let sql = String::from("SELECT * FROM ''");
+        let tokens = Tokenizer::new(&dialect, &sql).tokenize_with_location_with_errors();
+        dbg!(tokens);
+    }
+
+    #[test]
     fn tokenizer_error_impl() {
         let err = TokenizerError {
-            message: "test".into(),
+            error: TokenizerErrorType::OtherError("test".into()),
             location: Location { line: 1, column: 1 },
         };
         {
@@ -2696,19 +2793,23 @@ mod tests {
 
         let mut tokens = vec![];
         Tokenizer::new(&dialect, &sql)
-            .tokenize_with_location_into_buf_with_mapper(&mut tokens, |mut token_span| {
-                token_span.token = match token_span.token {
-                    Token::Placeholder(n) => Token::Placeholder(if n == "?" {
-                        let ret = format!("${}", param_num);
-                        param_num += 1;
-                        ret
-                    } else {
-                        n
-                    }),
-                    token => token,
-                };
-                token_span
-            })
+            .tokenize_with_location_into_buf_with_errors_with_mapper(
+                &mut tokens,
+                &mut vec![],
+                |mut token_span| {
+                    token_span.token = match token_span.token {
+                        Token::Placeholder(n) => Token::Placeholder(if n == "?" {
+                            let ret = format!("${}", param_num);
+                            param_num += 1;
+                            ret
+                        } else {
+                            n
+                        }),
+                        token => token,
+                    };
+                    token_span
+                },
+            )
             .unwrap();
         let actual = tokens.into_iter().map(|t| t.token).collect();
         let expected = vec![
@@ -3061,7 +3162,9 @@ mod tests {
         assert_eq!(
             tokenizer.tokenize(),
             Err(TokenizerError {
-                message: "Unterminated string literal".to_string(),
+                error: TokenizerErrorType::UnclosedStringError(
+                    "Unterminated string literal".to_string()
+                ),
                 location: Location { line: 1, column: 8 },
             })
         );
@@ -3076,7 +3179,9 @@ mod tests {
         assert_eq!(
             tokenizer.tokenize(),
             Err(TokenizerError {
-                message: "Unterminated string literal".to_string(),
+                error: TokenizerErrorType::UnclosedStringError(
+                    "Unterminated string literal".to_string()
+                ),
                 location: Location {
                     line: 1,
                     column: 35
@@ -3181,7 +3286,9 @@ mod tests {
         assert_eq!(
             Tokenizer::new(&dialect, &sql).tokenize(),
             Err(TokenizerError {
-                message: "Unterminated dollar-quoted, expected $".into(),
+                error: TokenizerErrorType::OtherError(
+                    "Unterminated dollar-quoted, expected $".into()
+                ),
                 location: Location {
                     line: 1,
                     column: 91
@@ -3197,7 +3304,9 @@ mod tests {
         assert_eq!(
             Tokenizer::new(&dialect, &sql).tokenize(),
             Err(TokenizerError {
-                message: "Unterminated dollar-quoted, expected $".into(),
+                error: TokenizerErrorType::OtherError(
+                    "Unterminated dollar-quoted, expected $".into()
+                ),
                 location: Location {
                     line: 1,
                     column: 17
@@ -3288,7 +3397,7 @@ mod tests {
         assert_eq!(
             Tokenizer::new(&dialect, &sql).tokenize(),
             Err(TokenizerError {
-                message: "Unterminated dollar-quoted string".into(),
+                error: TokenizerErrorType::OtherError("Unterminated dollar-quoted string".into()),
                 location: Location {
                     line: 1,
                     column: 86
@@ -3538,7 +3647,9 @@ mod tests {
         assert_eq!(
             tokenizer.tokenize(),
             Err(TokenizerError {
-                message: "Expected close delimiter '\"' before EOF.".to_string(),
+                error: TokenizerErrorType::UnclosedStringError(
+                    "Expected close delimiter '\"' before EOF.".to_string()
+                ),
                 location: Location { line: 1, column: 1 },
             })
         );
@@ -3905,8 +4016,8 @@ mod tests {
         for sql in [r#"'\'"#, r#"'ab\'"#] {
             let mut tokenizer = Tokenizer::new(&dialect, sql);
             assert_eq!(
-                "Unterminated string literal",
-                tokenizer.tokenize().unwrap_err().message.as_str(),
+                TokenizerErrorType::UnclosedStringError("Unterminated string literal".to_string()),
+                tokenizer.tokenize().unwrap_err().error,
             );
         }
 
@@ -4009,8 +4120,10 @@ mod tests {
                 let dialect = BigQueryDialect {};
                 let mut tokenizer = Tokenizer::new(&dialect, sql.as_str());
                 assert_eq!(
-                    "Unterminated string literal",
-                    tokenizer.tokenize().unwrap_err().message.as_str(),
+                    TokenizerErrorType::UnclosedStringError(
+                        "Unterminated string literal".to_string()
+                    ),
+                    tokenizer.tokenize().unwrap_err().error,
                 );
             }
         }

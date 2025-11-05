@@ -59,6 +59,16 @@ use sqlparser::ast::Value::Number;
 use sqlparser::test_utils::all_dialects_except;
 
 #[test]
+fn tokenize_with_errors() {
+    let query = "SELECT * from tablename WHERE id = '";
+    let d = GenericDialect {};
+
+    let tokenized_result = Tokenizer::new(&d, query).tokenize_with_location_with_errors();
+
+    dbg!(&tokenized_result);
+}
+
+#[test]
 fn parse_numeric_literal_underscore() {
     let dialects = all_dialects_where(|d| d.supports_numeric_literal_underscores());
 
@@ -12874,9 +12884,8 @@ fn test_buffer_reuse() {
     let d = GenericDialect {};
     let q = "INSERT INTO customer WITH foo AS (SELECT 1) SELECT * FROM foo UNION VALUES (1)";
     let mut buf = Vec::new();
-    Tokenizer::new(&d, q)
-        .tokenize_with_location_into_buf(&mut buf)
-        .unwrap();
+    let mut errors = Vec::new();
+    Tokenizer::new(&d, q).tokenize_with_location_with_errors_into_buf(&mut buf, &mut errors);
     let mut p = Parser::new(&d).with_tokens_with_locations(buf);
     p.parse_statements().unwrap();
     let _ = p.into_tokens();

@@ -29,6 +29,7 @@ use core::{
 use std::collections::{BTreeMap, BTreeSet};
 
 use helpers::attached_token::AttachedToken;
+use std::fmt::Debug;
 
 use log::debug;
 
@@ -60,6 +61,38 @@ pub enum ParserError {
     ParserError(String),
     /// Raised when a recursion depth limit is exceeded.
     RecursionLimitExceeded,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum ParseErrorType {
+    ExpectedExpression,
+    ExpectedKeyword {
+        expected: Keyword,
+        found: TokenWithSpan,
+    },
+    MutuallyExclusiveKeywords(Vec<Keyword>),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct ParseError {
+    pub error: ParseErrorType,
+    pub span: Span,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.error {
+            ParseErrorType::ExpectedExpression => {
+                write!(f, "Expected expression")
+            }
+            ParseErrorType::MutuallyExclusiveKeywords(_) => {
+                write!(f, "Keywords are mutually exclusive")
+            }
+            ParseErrorType::ExpectedKeyword { expected, found } => {
+                write!(f, "Expected '{:?}', got {}", expected, found)
+            }
+        }
+    }
 }
 
 // Use `Parser::expected` instead, if possible
@@ -373,6 +406,8 @@ pub struct Parser<'a> {
     /// `parse_table_factor`. See [`Parser::parse_table_factor`] for the 2^N
     /// pattern this guards.
     failed_derived_table_factor_positions: BTreeSet<usize>,
+    /// Errors encountered during parsing.
+    pub errors: Vec<ParseError>,
 }
 
 /// Copy marker for a [`ParserError`] cached by the `parse_prefix` failure
@@ -419,6 +454,7 @@ impl<'a> Parser<'a> {
             failed_prefix_positions: BTreeMap::new(),
             failed_reserved_word_prefix_positions: BTreeMap::new(),
             failed_derived_table_factor_positions: BTreeSet::new(),
+            errors: vec![],
         }
     }
 
@@ -497,6 +533,10 @@ impl<'a> Parser<'a> {
             })
             .collect();
         self.with_tokens_with_locations(tokens_with_locations)
+    }
+
+    fn add_error(&mut self, error: ParseErrorType, span: Span) {
+        self.errors.push(ParseError { error, span });
     }
 
     /// Tokenize the sql string and sets this [`Parser`]'s state to
@@ -4849,6 +4889,23 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub fn expect_keyword_or_error(&mut self, expected: Keyword) -> Option<TokenWithSpan> {
+        if self.parse_keyword(expected) {
+            Some(self.get_current_token().clone())
+        } else {
+            let found = self.peek_token_ref().clone();
+            let span = found.span;
+            self.add_error(
+                ParseErrorType::ExpectedKeyword {
+                    expected,
+                    found: found,
+                },
+                span,
+            );
+            None
+        }
+    }
+
     /// If the current token is the `expected` keyword, consume the token.
     /// Otherwise, return an error.
     ///
@@ -4937,6 +4994,23 @@ impl<'a> Parser<'a> {
         )
     }
 
+    /// Parse a comma-separated list of 1+ SelectItem, ignoring potential parsing errors from items
+    pub fn parse_projection_ignore_errors(&mut self) -> Vec<SelectItem> {
+        // BigQuery and Snowflake allow trailing commas, but only in project lists
+        // e.g. `SELECT 1, 2, FROM t`
+        // https://cloud.google.com/bigquery/docs/reference/standard-sql/lexical#trailing_commas
+        // https://docs.snowflake.com/en/release-notes/2024/8_11#select-supports-trailing-commas
+
+        let trailing_commas =
+            self.options.trailing_commas | self.dialect.supports_projection_trailing_commas();
+
+        self.parse_comma_separated_with_trailing_commas_ignore_errors(
+            |p| p.parse_select_item(),
+            trailing_commas,
+            Self::is_reserved_for_column_alias,
+        )
+    }
+
     /// Parse a list of actions for `GRANT` statements.
     pub fn parse_actions_list(&mut self) -> Result<Vec<Action>, ParserError> {
         let mut values = vec![];
@@ -5018,6 +5092,7 @@ impl<'a> Parser<'a> {
     pub fn parse_comma_separated<T, F>(&mut self, f: F) -> Result<Vec<T>, ParserError>
     where
         F: FnMut(&mut Parser<'a>) -> Result<T, ParserError>,
+        T: Debug,
     {
         self.parse_comma_separated_with_trailing_commas(
             f,
@@ -5039,18 +5114,62 @@ impl<'a> Parser<'a> {
     where
         F: FnMut(&mut Parser<'a>) -> Result<T, ParserError>,
         R: Fn(&Keyword, &mut Parser) -> bool,
+        T: Debug,
     {
         let mut values = vec![];
         loop {
-            values.push(f(self)?);
-            if self.is_parse_comma_separated_end_with_trailing_commas(
-                trailing_commas,
-                &is_reserved_keyword,
-            ) {
+            let v = f(self)?;
+            values.push(v);
+            if self.is_parse_comma_separated_end_with_trailing_commas(true, &is_reserved_keyword) {
+                // TODO: this is a bit of a hack:
+                if !trailing_commas && self.get_previous_token().token == Token::Comma {
+                    // A trailing comma was found but not allowed, add an error:
+                    self.add_error(
+                        ParseErrorType::ExpectedExpression,
+                        self.get_previous_token().span,
+                    );
+                }
                 break;
             }
         }
         Ok(values)
+    }
+
+    /// Parse a comma-separated list of 1+ items accepted by `F`.
+    /// Discard any error when parsing each item.
+    /// `R` is a predicate that should return true if the next
+    /// keyword is a reserved keyword.
+    /// Allows for control over trailing commas.
+    fn parse_comma_separated_with_trailing_commas_ignore_errors<T, F, R>(
+        &mut self,
+        mut f: F,
+        trailing_commas: bool,
+        is_reserved_keyword: R,
+    ) -> Vec<T>
+    where
+        F: FnMut(&mut Parser<'a>) -> Result<T, ParserError>,
+        R: Fn(&Keyword, &mut Parser) -> bool,
+        T: Debug,
+    {
+        let mut values = vec![];
+        loop {
+            let r = f(self);
+            if let Ok(value) = r {
+                values.push(value);
+            }
+            if self.is_parse_comma_separated_end_with_trailing_commas(true, &is_reserved_keyword) {
+                // TODO: this is a bit of a hack:
+                if !trailing_commas && self.get_previous_token().token == Token::Comma {
+                    // A trailing comma was found but not allowed, add an error:
+                    self.add_error(
+                        ParseErrorType::ExpectedExpression,
+                        self.get_previous_token().span,
+                    );
+                }
+                break;
+            }
+        }
+        values
     }
 
     /// Parse a period-separated list of 1+ items accepted by `F`
@@ -5107,6 +5226,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Vec<T>, ParserError>
     where
         F: FnMut(&mut Parser<'a>) -> Result<T, ParserError>,
+        T: Debug,
     {
         if self.peek_token_ref().token == end_token {
             return Ok(vec![]);
@@ -5185,17 +5305,29 @@ impl<'a> Parser<'a> {
     /// Parse either `ALL`, `DISTINCT` or `DISTINCT ON (...)`. Returns [`None`] if `ALL` is parsed
     /// and results in a [`ParserError`] if both `ALL` and `DISTINCT` are found.
     pub fn parse_all_or_distinct(&mut self) -> Result<Option<Distinct>, ParserError> {
-        let loc = self.peek_token_ref().span.start;
+        let span = self.peek_token_ref().span;
         let distinct = match self.parse_one_of_keywords(&[Keyword::ALL, Keyword::DISTINCT]) {
             Some(Keyword::ALL) => {
-                if self.peek_keyword(Keyword::DISTINCT) {
-                    return parser_err!("Cannot specify ALL then DISTINCT".to_string(), loc);
+                if self.parse_keyword(Keyword::DISTINCT) {
+                    self.add_error(
+                        ParseErrorType::MutuallyExclusiveKeywords(vec![
+                            Keyword::ALL,
+                            Keyword::DISTINCT,
+                        ]),
+                        span,
+                    );
                 }
                 Some(Distinct::All)
             }
             Some(Keyword::DISTINCT) => {
-                if self.peek_keyword(Keyword::ALL) {
-                    return parser_err!("Cannot specify DISTINCT then ALL".to_string(), loc);
+                if self.parse_keyword(Keyword::ALL) {
+                    self.add_error(
+                        ParseErrorType::MutuallyExclusiveKeywords(vec![
+                            Keyword::ALL,
+                            Keyword::DISTINCT,
+                        ]),
+                        span,
+                    );
                 }
                 Some(Distinct::Distinct)
             }
@@ -13931,6 +14063,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Vec<T>, ParserError>
     where
         F: FnMut(&mut Parser) -> Result<T, ParserError>,
+        T: Debug,
     {
         if self.consume_token(&Token::LParen) {
             if allow_empty && self.peek_token_ref().token == Token::RParen {
@@ -15083,7 +15216,9 @@ impl<'a> Parser<'a> {
             let from = self.parse_table_with_joins()?;
             if !self.peek_keyword(Keyword::SELECT) {
                 return Ok(Select {
-                    select_token: AttachedToken(from_token),
+                    select_token: None,
+                    from_token: Some(AttachedToken(from_token)),
+                    where_token: None,
                     optimizer_hints: vec![],
                     distinct: None,
                     select_modifiers: None,
@@ -15112,7 +15247,7 @@ impl<'a> Parser<'a> {
             from_first = Some(from);
         }
 
-        let select_token = self.expect_keyword(Keyword::SELECT)?;
+        let select_token = self.expect_keyword_or_error(Keyword::SELECT);
         let optimizer_hints = self.maybe_parse_optimizer_hints()?;
         let value_table_mode = self.parse_value_table_mode()?;
 
@@ -15144,7 +15279,7 @@ impl<'a> Parser<'a> {
             if self.dialect.supports_empty_projections() && self.peek_keyword(Keyword::FROM) {
                 vec![]
             } else {
-                self.parse_projection()?
+                self.parse_projection_ignore_errors()
             };
 
         let exclude = if self.dialect.supports_select_exclude() {
@@ -15271,7 +15406,9 @@ impl<'a> Parser<'a> {
         };
 
         Ok(Select {
-            select_token: AttachedToken(select_token),
+            select_token: select_token.map(AttachedToken),
+            from_token: None,
+            where_token: None,
             optimizer_hints,
             distinct,
             select_modifiers,
@@ -21880,5 +22017,17 @@ mod tests {
             let sql = format!("\nSELECT\n  :{w}fooBar");
             assert!(Parser::parse_sql(&GenericDialect, &sql).is_err());
         }
+    }
+
+    #[test]
+
+    fn test_tmp() {
+        let sql = "SELECT a, from t";
+        let parser = Parser::new(&GenericDialect);
+        let mut parser = parser.try_with_sql(&sql).unwrap();
+        let result = parser.parse_statements();
+
+        dbg!(&result);
+        dbg!(&parser.errors);
     }
 }
