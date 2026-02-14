@@ -70,6 +70,9 @@ pub enum ParseErrorType {
         expected: Keyword,
         found: TokenWithSpan,
     },
+    ExpectedIdentifierOrWildcard {
+        found: TokenWithSpan,
+    },
     MutuallyExclusiveKeywords(Vec<Keyword>),
 }
 
@@ -85,11 +88,14 @@ impl fmt::Display for ParseError {
             ParseErrorType::ExpectedExpression => {
                 write!(f, "Expected expression")
             }
-            ParseErrorType::MutuallyExclusiveKeywords(_) => {
-                write!(f, "Keywords are mutually exclusive")
-            }
             ParseErrorType::ExpectedKeyword { expected, found } => {
                 write!(f, "Expected '{:?}', got {}", expected, found)
+            }
+            ParseErrorType::ExpectedIdentifierOrWildcard { found } => {
+                write!(f, "Expected an identifier or '*', got {}", found)
+            }
+            ParseErrorType::MutuallyExclusiveKeywords(_) => {
+                write!(f, "Keywords are mutually exclusive")
             }
         }
     }
@@ -1397,6 +1403,8 @@ impl<'a> Parser<'a> {
                 }];
 
                 while self.consume_token(&Token::Period) {
+                    let period_index = self.index - 1;
+
                     let next_token = self.next_token();
                     match next_token.token {
                         Token::Word(w) => id_parts.push(w.into_ident(next_token.span)),
@@ -1416,7 +1424,19 @@ impl<'a> Parser<'a> {
                             ));
                         }
                         _ => {
-                            return self.expected("an identifier or a '*' after '.'", next_token);
+                            // A bit hacky, but we have to handle the error recovery here and return early instead of in
+                            // the `parse_expr()` call below (which redoes the same job as here, minus the handling of '*')
+                            // as we would handle the same error twice otherwise.
+                            let period_span = self.tokens.get(period_index).unwrap().span;
+                            let span = Span::new(period_span.end, period_span.end);
+                            self.add_error(
+                                ParseErrorType::ExpectedIdentifierOrWildcard { found: next_token },
+                                span,
+                            );
+
+                            // Add an empty ident right after the period:
+                            id_parts.push(Ident::with_span(span, ""));
+                            return Ok(Expr::CompoundIdentifier(id_parts));
                         }
                     }
                 }
@@ -22022,7 +22042,7 @@ mod tests {
     #[test]
 
     fn test_tmp() {
-        let sql = "SELECT a, from t";
+        let sql = "FROM t SELECT t. ,";
         let parser = Parser::new(&GenericDialect);
         let mut parser = parser.try_with_sql(&sql).unwrap();
         let result = parser.parse_statements();
