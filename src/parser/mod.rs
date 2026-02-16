@@ -5028,6 +5028,7 @@ impl<'a> Parser<'a> {
             |p| p.parse_select_item(),
             trailing_commas,
             Self::is_reserved_for_column_alias,
+            self.dialect.supports_empty_projections(),
         )
     }
 
@@ -5165,6 +5166,7 @@ impl<'a> Parser<'a> {
         mut f: F,
         trailing_commas: bool,
         is_reserved_keyword: R,
+        supports_empty: bool,
     ) -> Vec<T>
     where
         F: FnMut(&mut Parser<'a>) -> Result<T, ParserError>,
@@ -5172,11 +5174,27 @@ impl<'a> Parser<'a> {
         T: Debug,
     {
         let mut values = vec![];
+        if supports_empty {
+            // TODO: try to deduplicate logic from `is_parse_comma_separated_end_with_trailing_commas()`:
+            let token = self.next_token().token;
+            let is_end = match token {
+                Token::Word(ref kw) if is_reserved_keyword(&kw.keyword, self) => true,
+                Token::RParen | Token::SemiColon | Token::EOF | Token::RBracket | Token::RBrace => {
+                    true
+                }
+                _ => false,
+            };
+            self.prev_token();
+            if is_end {
+                return values;
+            }
+        }
         loop {
             let r = f(self);
             if let Ok(value) = r {
                 values.push(value);
             }
+
             if self.is_parse_comma_separated_end_with_trailing_commas(true, &is_reserved_keyword) {
                 // TODO: this is a bit of a hack:
                 if !trailing_commas && self.get_previous_token().token == Token::Comma {
@@ -22042,7 +22060,18 @@ mod tests {
     #[test]
 
     fn test_tmp() {
-        let sql = "FROM t SELECT t. ,";
+        let sql = "FROM (FROM metrics SELECT) SELECT";
+        let parser = Parser::new(&GenericDialect);
+        let mut parser = parser.try_with_sql(&sql).unwrap();
+        let result = parser.parse_statements();
+
+        dbg!(&result);
+        dbg!(&parser.errors);
+    }
+
+    #[test]
+    fn test_tmp_2() {
+        let sql = "FROM metrics SELECT (, ";
         let parser = Parser::new(&GenericDialect);
         let mut parser = parser.try_with_sql(&sql).unwrap();
         let result = parser.parse_statements();
