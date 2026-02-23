@@ -15383,11 +15383,25 @@ impl<'a> Parser<'a> {
             None
         };
 
-        let selection = if self.parse_keyword(Keyword::WHERE) {
-            Some(self.parse_expr()?)
-        } else {
-            None
-        };
+        let mut where_token = None;
+        let mut selection = None;
+        if self.peek_keyword(Keyword::WHERE) {
+            where_token = Some(self.expect_keyword(Keyword::WHERE)?);
+
+            let index = self.index;
+
+            selection = match self.parse_expr() {
+                Ok(e) => Some(e),
+                Err(_) => {
+                    self.index = index;
+                    self.add_error(
+                        ParseErrorType::ExpectedExpression,
+                        self.peek_token_ref().span,
+                    );
+                    None
+                }
+            };
+        }
 
         let connect_by = self.maybe_parse_connect_by()?;
 
@@ -15446,7 +15460,7 @@ impl<'a> Parser<'a> {
         Ok(Select {
             select_token: select_token.map(AttachedToken),
             from_token: None,
-            where_token: None,
+            where_token: where_token.map(AttachedToken),
             optimizer_hints,
             distinct,
             select_modifiers,
@@ -22071,7 +22085,7 @@ mod tests {
 
     #[test]
     fn test_tmp_2() {
-        let sql = "FROM metrics SELECT (, ";
+        let sql = "FROM (FROM t SELECT a WHERE";
         let parser = Parser::new(&GenericDialect);
         let mut parser = parser.try_with_sql(&sql).unwrap();
         let result = parser.parse_statements();
