@@ -4720,6 +4720,22 @@ impl<'a> Parser<'a> {
         self.token_at(self.index)
     }
 
+    pub fn last_non_ws_token(&self) -> Option<&TokenWithSpan> {
+        let mut index = self.index;
+        loop {
+            index -= 1;
+            match self.tokens.get(index) {
+                Some(TokenWithSpan {
+                    token: Token::Whitespace(_),
+                    span: _,
+                }) => continue,
+                non_whitespace => {
+                    return non_whitespace;
+                }
+            }
+        }
+    }
+
     /// Seek back the last one non-whitespace token.
     ///
     /// Must be called after `next_token()`, otherwise might panic. OK to call
@@ -5072,7 +5088,7 @@ impl<'a> Parser<'a> {
     /// keyword is a reserved keyword.
     /// Allows for control over trailing commas
     ///
-    /// Returns true if there is a next element
+    /// Returns true if there is no next element
     fn is_parse_comma_separated_end_with_trailing_commas<R>(
         &mut self,
         trailing_commas: bool,
@@ -5197,12 +5213,16 @@ impl<'a> Parser<'a> {
 
             if self.is_parse_comma_separated_end_with_trailing_commas(true, &is_reserved_keyword) {
                 // TODO: this is a bit of a hack:
-                if !trailing_commas && self.get_previous_token().token == Token::Comma {
-                    // A trailing comma was found but not allowed, add an error:
-                    self.add_error(
-                        ParseErrorType::ExpectedExpression,
-                        self.get_previous_token().span,
-                    );
+                if !trailing_commas {
+                    let last_token = match self.last_non_ws_token() {
+                        Some(t) if t.token == Token::Comma => Some(t),
+                        _ => None,
+                    };
+
+                    if let Some(last_token) = last_token {
+                        // A trailing comma was found but not allowed, add an error:
+                        self.add_error(ParseErrorType::ExpectedExpression, last_token.span);
+                    }
                 }
                 break;
             }
