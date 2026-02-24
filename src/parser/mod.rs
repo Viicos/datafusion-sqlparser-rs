@@ -15416,9 +15416,11 @@ impl<'a> Parser<'a> {
                     self.index = index;
                     self.add_error(
                         ParseErrorType::ExpectedExpression,
-                        // We could use `self.peek_token_ref().span`, but if it is EOF
-                        // the span is currently the empty one:
-                        where_token.as_ref().unwrap().span.clone(),
+                        match self.peek_token_ref().token {
+                            // EOF has an empty span, so use the span of the WHERE token instead:
+                            Token::EOF => where_token.as_ref().unwrap().span.clone(),
+                            _ => self.peek_token_ref().span,
+                        },
                     );
                     None
                 }
