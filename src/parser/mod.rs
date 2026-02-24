@@ -73,6 +73,7 @@ pub enum ParseErrorType {
     ExpectedIdentifierOrWildcard {
         found: TokenWithSpan,
     },
+    ExpectedQueryBody,
     MutuallyExclusiveKeywords(Vec<Keyword>),
 }
 
@@ -93,6 +94,9 @@ impl fmt::Display for ParseError {
             }
             ParseErrorType::ExpectedIdentifierOrWildcard { found } => {
                 write!(f, "Expected an identifier or '*', got {}", found)
+            }
+            ParseErrorType::ExpectedQueryBody => {
+                write!(f, "Expected a query body")
             }
             ParseErrorType::MutuallyExclusiveKeywords(_) => {
                 write!(f, "Keywords are mutually exclusive")
@@ -5390,7 +5394,7 @@ impl<'a> Parser<'a> {
                 Some(Distinct::Distinct)
             }
             None => return Ok(None),
-            _ => return parser_err!("ALL or DISTINCT", loc),
+            _ => return parser_err!("ALL or DISTINCT", span.start),
         };
 
         let Some(Distinct::Distinct) = distinct else {
@@ -15179,10 +15183,36 @@ impl<'a> Parser<'a> {
         } else if self.parse_keyword(Keyword::TABLE) {
             SetExpr::Table(Box::new(self.parse_as_table()?))
         } else {
-            return self.expected_ref(
-                "SELECT, VALUES, or a subquery in the query body",
-                self.peek_token_ref(),
-            );
+            self.add_error(ParseErrorType::ExpectedQueryBody, self.peek_token().span);
+
+            SetExpr::Select(Box::new(Select {
+                select_token: None,
+                from_token: None,
+                where_token: None,
+                optimizer_hints: vec![],
+                distinct: None,
+                select_modifiers: None,
+                top: None,
+                top_before_distinct: false,
+                projection: vec![],
+                exclude: None,
+                into: None,
+                from: vec![],
+                lateral_views: vec![],
+                prewhere: None,
+                selection: None,
+                group_by: GroupByExpr::Expressions(vec![], vec![]),
+                cluster_by: vec![],
+                distribute_by: vec![],
+                sort_by: vec![],
+                having: None,
+                named_window: vec![],
+                window_before_qualify: false,
+                qualify: None,
+                value_table_mode: None,
+                connect_by: vec![],
+                flavor: SelectFlavor::FromFirstNoSelect,
+            }))
         };
 
         self.parse_remaining_set_exprs(expr, precedence)
