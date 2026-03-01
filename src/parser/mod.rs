@@ -63,23 +63,35 @@ pub enum ParserError {
     RecursionLimitExceeded,
 }
 
+/// Type of parsing errors.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ParseErrorType {
+    /// Expected an expression.
     ExpectedExpression,
+    /// Expected a keyword.
     ExpectedKeyword {
+        /// The expected keyword.
         expected: Keyword,
+        /// What was found in place of the expected keyword.
         found: TokenWithSpan,
     },
+    /// Expected an identifier or a wildcard (`*`).
     ExpectedIdentifierOrWildcard {
+        /// What was found in place of the identifier or wildcard.
         found: TokenWithSpan,
     },
+    /// Expected the body of a query.
     ExpectedQueryBody,
+    /// The keywords used are mutually exclusive.
     MutuallyExclusiveKeywords(Vec<Keyword>),
 }
 
+/// A parsing error.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ParseError {
+    /// The type of the error.
     pub error: ParseErrorType,
+    /// The span where the error appears.
     pub span: Span,
 }
 
@@ -4724,6 +4736,7 @@ impl<'a> Parser<'a> {
         self.token_at(self.index)
     }
 
+    /// Returns a reference the last non-whitespace token.
     pub fn last_non_ws_token(&self) -> Option<&TokenWithSpan> {
         let mut index = self.index;
         loop {
@@ -4929,19 +4942,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse a keyword, or error with a [`ParseErrorType::ExpectedKeyword`] error.
     pub fn expect_keyword_or_error(&mut self, expected: Keyword) -> Option<TokenWithSpan> {
         if self.parse_keyword(expected) {
             Some(self.get_current_token().clone())
         } else {
             let found = self.peek_token_ref().clone();
             let span = found.span;
-            self.add_error(
-                ParseErrorType::ExpectedKeyword {
-                    expected,
-                    found: found,
-                },
-                span,
-            );
+            self.add_error(ParseErrorType::ExpectedKeyword { expected, found }, span);
             None
         }
     }
@@ -15448,7 +15456,7 @@ impl<'a> Parser<'a> {
                         ParseErrorType::ExpectedExpression,
                         match self.peek_token_ref().token {
                             // EOF has an empty span, so use the span of the WHERE token instead:
-                            Token::EOF => where_token.as_ref().unwrap().span.clone(),
+                            Token::EOF => where_token.as_ref().unwrap().span,
                             _ => self.peek_token_ref().span,
                         },
                     );

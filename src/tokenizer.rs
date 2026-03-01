@@ -788,11 +788,15 @@ impl fmt::Display for TokenWithSpan {
     }
 }
 
+/// Type of tokenizer errors.
 #[derive(Debug, Clone, PartialOrd, Ord, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum TokenizerErrorType {
+    /// A sring is missing a closing quote.
     UnclosedStringError(String),
+    /// An unexpected token was found.
     UnexpectedTokenError(char),
+    /// Other error.
     OtherError(String),
 }
 
@@ -884,9 +888,12 @@ struct TokenizeQuotedStringSettings {
     backslash_escape: bool,
 }
 
+/// The result of the tokenization.
 #[derive(Debug, Clone)]
 pub struct TokenizedResult {
+    /// The tokens.
     pub tokens: Vec<TokenWithSpan>,
+    /// The errors encountered during tokenization.
     pub errors: Vec<TokenizerError>,
 }
 
@@ -975,11 +982,12 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    /// Tokenize the statement and produce a tokenization result.
     pub fn tokenize_with_location_with_errors(&mut self) -> TokenizedResult {
         let mut tokens: Vec<TokenWithSpan> = vec![];
         let mut errors: Vec<TokenizerError> = vec![];
 
-        self.tokenize_with_location_with_errors_into_buf(&mut tokens, &mut errors);
+        let _ = self.tokenize_with_location_with_errors_into_buf(&mut tokens, &mut errors);
 
         TokenizedResult { tokens, errors }
     }
