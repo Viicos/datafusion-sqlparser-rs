@@ -1391,7 +1391,7 @@ pub enum Expr {
     /// Checks membership of a value in a JSON array
     MemberOf(MemberOf),
     /// An empty expression, used as a temporary solution to return an expression when parsing a list
-    /// and a trailing comma is ued.
+    /// and a trailing comma is used.
     Empty,
 }
 

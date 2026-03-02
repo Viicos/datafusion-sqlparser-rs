@@ -4122,10 +4122,24 @@ impl<'a> Parser<'a> {
                     )),
                 })
             } else {
+                let backup_index = self.index;
+                let right = match self.parse_subexpr(precedence) {
+                    Ok(e) => e,
+                    Err(_) => {
+                        self.add_error(
+                            ParseErrorType::ExpectedExpression,
+                            self.token_at(tok_index).span,
+                        );
+                        self.index = backup_index;
+                        // Use the span of the operator:
+                        Expr::Identifier(Ident::with_span(span, ""))
+                    }
+                };
+
                 Ok(Expr::BinaryOp {
                     left: Box::new(expr),
                     op,
-                    right: Box::new(self.parse_subexpr(precedence)?),
+                    right: Box::new(right),
                 })
             }
         } else if let Token::Word(w) = &tok.token {
@@ -22147,7 +22161,7 @@ mod tests {
 
     #[test]
     fn test_tmp_2() {
-        let sql = "FROM (FROM t SELECT a WHERE";
+        let sql = "SELECT * FROM t WHERE 1 +";
         let parser = Parser::new(&GenericDialect);
         let mut parser = parser.try_with_sql(&sql).unwrap();
         let result = parser.parse_statements();
