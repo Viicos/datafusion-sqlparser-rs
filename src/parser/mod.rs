@@ -4122,15 +4122,13 @@ impl<'a> Parser<'a> {
                     )),
                 })
             } else {
-                let backup_index = self.index;
-                let right = match self.parse_subexpr(precedence) {
-                    Ok(e) => e,
-                    Err(_) => {
+                let right = match self.maybe_parse(|p| p.parse_subexpr(precedence))? {
+                    Some(e) => e,
+                    None => {
                         self.add_error(
                             ParseErrorType::ExpectedExpression,
                             self.token_at(tok_index).span,
                         );
-                        self.index = backup_index;
                         // Use the span of the operator:
                         Expr::Identifier(Ident::with_span(span, ""))
                     }
@@ -5376,8 +5374,18 @@ impl<'a> Parser<'a> {
         F: FnMut(&mut Parser) -> Result<T, ParserError>,
     {
         let index = self.index;
+        let parse_error_count = self.errors.len();
         match f(self) {
-            Ok(t) => Ok(t),
+            Ok(t) => {
+                // It might be `Ok(_)` because the parsing was error tolerant and returned an empty parsed value:
+                if self.errors.len() > parse_error_count {
+                    let first_error = self.errors.drain(parse_error_count..).next().unwrap();
+                    self.index = index;
+                    Err(ParserError::ParserError(first_error.to_string()))
+                } else {
+                    Ok(t)
+                }
+            }
             Err(e) => {
                 // Unwind stack if limit exceeded
                 self.index = index;
@@ -15460,12 +15468,9 @@ impl<'a> Parser<'a> {
         if self.peek_keyword(Keyword::WHERE) {
             where_token = Some(self.expect_keyword(Keyword::WHERE)?);
 
-            let index = self.index;
-
-            selection = match self.parse_expr() {
-                Ok(e) => Some(e),
-                Err(_) => {
-                    self.index = index;
+            selection = match self.maybe_parse(|p| p.parse_expr())? {
+                Some(e) => Some(e),
+                None => {
                     self.add_error(
                         ParseErrorType::ExpectedExpression,
                         match self.peek_token_ref().token {
