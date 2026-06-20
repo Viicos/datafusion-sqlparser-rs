@@ -4122,13 +4122,15 @@ impl<'a> Parser<'a> {
                     )),
                 })
             } else {
-                let right = match self.maybe_parse(|p| p.parse_subexpr(precedence))? {
-                    Some(e) => e,
-                    None => {
+                let backup_index = self.index;
+                let right = match self.parse_subexpr(precedence) {
+                    Ok(e) => e,
+                    Err(_) => {
                         self.add_error(
                             ParseErrorType::ExpectedExpression,
                             self.token_at(tok_index).span,
                         );
+                        self.index = backup_index;
                         // Use the span of the operator:
                         Expr::Identifier(Ident::with_span(span, ""))
                     }
@@ -15468,9 +15470,12 @@ impl<'a> Parser<'a> {
         if self.peek_keyword(Keyword::WHERE) {
             where_token = Some(self.expect_keyword(Keyword::WHERE)?);
 
-            selection = match self.maybe_parse(|p| p.parse_expr())? {
-                Some(e) => Some(e),
-                None => {
+            let index = self.index;
+
+            selection = match self.parse_expr() {
+                Ok(e) => Some(e),
+                Err(_) => {
+                    self.index = index;
                     self.add_error(
                         ParseErrorType::ExpectedExpression,
                         match self.peek_token_ref().token {
@@ -22166,7 +22171,7 @@ mod tests {
 
     #[test]
     fn test_tmp_2() {
-        let sql = "SELECT * FROM t WHERE 1 +";
+        let sql = "SELECT * FROM t WHERE a IN ('test')";
         let parser = Parser::new(&GenericDialect);
         let mut parser = parser.try_with_sql(&sql).unwrap();
         let result = parser.parse_statements();
