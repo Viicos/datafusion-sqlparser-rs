@@ -2895,6 +2895,9 @@ pub enum OrderByKind {
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 /// Represents an `ORDER BY` clause with its kind and optional `INTERPOLATE`.
 pub struct OrderBy {
+    /// The two tokens for the `ORDER BY` clause.
+    pub order_by_tokens: (AttachedToken, AttachedToken),
+
     /// The kind of ordering (expressions or `ALL`).
     pub kind: OrderByKind,
 

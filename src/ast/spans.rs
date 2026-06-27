@@ -1281,19 +1281,23 @@ impl Spanned for ProjectionSelect {
     }
 }
 
-/// # partial span
-///
-/// Missing spans:
-/// - [OrderByKind::All]
 impl Spanned for OrderBy {
     fn span(&self) -> Span {
-        match &self.kind {
-            OrderByKind::All(_) => Span::empty(),
+        let OrderBy {
+            order_by_tokens,
+            kind,
+            interpolate,
+        } = self;
+
+        let token_spans = [order_by_tokens.0 .0.span, order_by_tokens.1 .0.span];
+
+        match kind {
+            OrderByKind::All(_) => union_spans(token_spans.into_iter()),
             OrderByKind::Expressions(exprs) => union_spans(
-                exprs
-                    .iter()
-                    .map(|i| i.span())
-                    .chain(self.interpolate.iter().map(|i| i.span())),
+                token_spans
+                    .into_iter()
+                    .chain(exprs.iter().map(|i| i.span()))
+                    .chain(interpolate.iter().map(|i| i.span())),
             ),
         }
     }

@@ -13651,22 +13651,33 @@ impl<'a> Parser<'a> {
 
     /// Parse an optional `ORDER BY` clause, returning `Some(OrderBy)` when present.
     pub fn parse_optional_order_by(&mut self) -> Result<Option<OrderBy>, ParserError> {
-        if self.parse_keywords(&[Keyword::ORDER, Keyword::BY]) {
+        if self.peek_keywords(&[Keyword::ORDER, Keyword::BY]) {
+            let order_by_tokens = (
+                AttachedToken(self.expect_keyword(Keyword::ORDER)?),
+                AttachedToken(self.expect_keyword(Keyword::BY)?),
+            );
             let order_by =
                 if self.dialect.supports_order_by_all() && self.parse_keyword(Keyword::ALL) {
                     let order_by_options = self.parse_order_by_options()?;
                     OrderBy {
+                        order_by_tokens,
                         kind: OrderByKind::All(order_by_options),
                         interpolate: None,
                     }
                 } else {
-                    let exprs = self.parse_comma_separated(Parser::parse_order_by_expr)?;
+                    let exprs = self.parse_comma_separated_with_trailing_commas_ignore_errors(
+                        Parser::parse_order_by_expr,
+                        self.options.trailing_commas,
+                        Self::is_reserved_for_column_alias,
+                        false,
+                    );
                     let interpolate = if self.dialect.supports_interpolate() {
                         self.parse_interpolations()?
                     } else {
                         None
                     };
                     OrderBy {
+                        order_by_tokens,
                         kind: OrderByKind::Expressions(exprs),
                         interpolate,
                     }
@@ -22172,6 +22183,17 @@ mod tests {
     #[test]
     fn test_tmp_2() {
         let sql = "SELECT * FROM t WHERE a IN ('test')";
+        let parser = Parser::new(&GenericDialect);
+        let mut parser = parser.try_with_sql(&sql).unwrap();
+        let result = parser.parse_statements();
+
+        dbg!(&result);
+        dbg!(&parser.errors);
+    }
+
+    #[test]
+    fn test_tmp_3() {
+        let sql = "SELECT * FROM t ORDER BY";
         let parser = Parser::new(&GenericDialect);
         let mut parser = parser.try_with_sql(&sql).unwrap();
         let result = parser.parse_statements();
