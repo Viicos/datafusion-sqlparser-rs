@@ -13652,15 +13652,14 @@ impl<'a> Parser<'a> {
     /// Parse an optional `ORDER BY` clause, returning `Some(OrderBy)` when present.
     pub fn parse_optional_order_by(&mut self) -> Result<Option<OrderBy>, ParserError> {
         if self.peek_keywords(&[Keyword::ORDER, Keyword::BY]) {
-            let order_by_tokens = (
-                AttachedToken(self.expect_keyword(Keyword::ORDER)?),
-                AttachedToken(self.expect_keyword(Keyword::BY)?),
-            );
+            let order_token = AttachedToken(self.expect_keyword(Keyword::ORDER)?);
+            let by_token = AttachedToken(self.expect_keyword(Keyword::BY)?);
             let order_by =
                 if self.dialect.supports_order_by_all() && self.parse_keyword(Keyword::ALL) {
                     let order_by_options = self.parse_order_by_options()?;
                     OrderBy {
-                        order_by_tokens,
+                        order_token,
+                        by_token,
                         kind: OrderByKind::All(order_by_options),
                         interpolate: None,
                     }
@@ -13677,7 +13676,8 @@ impl<'a> Parser<'a> {
                         None
                     };
                     OrderBy {
-                        order_by_tokens,
+                        order_token,
+                        by_token,
                         kind: OrderByKind::Expressions(exprs),
                         interpolate,
                     }

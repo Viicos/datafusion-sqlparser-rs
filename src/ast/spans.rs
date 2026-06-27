@@ -1284,12 +1284,13 @@ impl Spanned for ProjectionSelect {
 impl Spanned for OrderBy {
     fn span(&self) -> Span {
         let OrderBy {
-            order_by_tokens,
+            order_token,
+            by_token,
             kind,
             interpolate,
         } = self;
 
-        let token_spans = [order_by_tokens.0 .0.span, order_by_tokens.1 .0.span];
+        let token_spans = [order_token.0.span, by_token.0.span];
 
         match kind {
             OrderByKind::All(_) => union_spans(token_spans.into_iter()),
