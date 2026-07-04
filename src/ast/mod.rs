@@ -8242,7 +8242,7 @@ pub enum FunctionArguments {
     Subquery(Box<Query>),
     /// A normal function argument list, including any clauses within it such as
     /// `DISTINCT` or `ORDER BY`.
-    List(FunctionArgumentList),
+    List(Parens<FunctionArgumentList>),
 }
 
 impl fmt::Display for FunctionArguments {
@@ -8250,7 +8250,7 @@ impl fmt::Display for FunctionArguments {
         match self {
             FunctionArguments::None => Ok(()),
             FunctionArguments::Subquery(query) => write!(f, "({query})"),
-            FunctionArguments::List(args) => write!(f, "({args})"),
+            FunctionArguments::List(args) => write!(f, "({})", args.content),
         }
     }
 }

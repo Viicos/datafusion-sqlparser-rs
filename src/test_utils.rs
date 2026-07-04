@@ -441,14 +441,14 @@ pub fn call(function: &str, args: impl IntoIterator<Item = Expr>) -> Expr {
         name: ObjectName::from(vec![Ident::new(function)]),
         uses_odbc_syntax: false,
         parameters: FunctionArguments::None,
-        args: FunctionArguments::List(FunctionArgumentList {
+        args: FunctionArguments::List(Parens::with_empty_span(FunctionArgumentList {
             duplicate_treatment: None,
             args: args
                 .into_iter()
                 .map(|arg| FunctionArg::Unnamed(FunctionArgExpr::Expr(arg)))
                 .collect(),
             clauses: vec![],
-        }),
+        })),
         filter: None,
         null_treatment: None,
         over: None,

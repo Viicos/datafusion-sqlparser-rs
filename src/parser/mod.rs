@@ -2615,7 +2615,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_function_call(&mut self, name: ObjectName) -> Result<Function, ParserError> {
-        self.expect_token(&Token::LParen)?;
+        let mut l_paren = self.expect_token(&Token::LParen)?;
 
         // Snowflake permits a subquery to be passed as an argument without
         // an enclosing set of parens if it's the only argument.
@@ -2634,15 +2634,20 @@ impl<'a> Parser<'a> {
             });
         }
 
-        let mut args = self.parse_function_argument_list()?;
+        let (mut args, mut r_paren) = self.parse_function_argument_list()?;
         let mut parameters = FunctionArguments::None;
         // ClickHouse aggregations support parametric functions like `HISTOGRAM(0.5, 0.6)(x, y)`
         // which (0.5, 0.6) is a parameter to the function.
         if dialect_of!(self is ClickHouseDialect | GenericDialect)
-            && self.consume_token(&Token::LParen)
+            && self.peek_token_ref() == &Token::LParen
         {
-            parameters = FunctionArguments::List(args);
-            args = self.parse_function_argument_list()?;
+            parameters = FunctionArguments::List(Parens {
+                opening_token: l_paren.into(),
+                content: args,
+                closing_token: r_paren.into(),
+            });
+            l_paren = self.expect_token(&Token::LParen)?;
+            (args, r_paren) = self.parse_function_argument_list()?;
         }
 
         let within_group = if self.parse_keywords(&[Keyword::WITHIN, Keyword::GROUP]) {
@@ -2694,7 +2699,11 @@ impl<'a> Parser<'a> {
             name,
             uses_odbc_syntax: false,
             parameters,
-            args: FunctionArguments::List(args),
+            args: FunctionArguments::List(Parens {
+                opening_token: l_paren.into(),
+                content: args,
+                closing_token: r_paren.into(),
+            }),
             null_treatment,
             filter,
             over,
@@ -2720,11 +2729,18 @@ impl<'a> Parser<'a> {
 
     /// Parse time-related function `name` possibly followed by `(...)` arguments.
     pub fn parse_time_functions(&mut self, name: ObjectName) -> Result<Expr, ParserError> {
-        let args = if self.consume_token(&Token::LParen) {
-            FunctionArguments::List(self.parse_function_argument_list()?)
+        let args = if self.peek_token_ref() == &Token::LParen {
+            let l_paren = self.expect_token(&Token::LParen)?;
+            let (args, r_paren) = self.parse_function_argument_list()?;
+            FunctionArguments::List(Parens {
+                opening_token: l_paren.into(),
+                content: args,
+                closing_token: r_paren.into(),
+            })
         } else {
             FunctionArguments::None
         };
+
         Ok(Expr::Function(Function {
             name,
             uses_odbc_syntax: false,
@@ -19130,7 +19146,9 @@ impl<'a> Parser<'a> {
     /// FIRST_VALUE(x ORDER BY 1,2,3);
     /// FIRST_VALUE(x IGNORE NULL);
     /// ```
-    fn parse_function_argument_list(&mut self) -> Result<FunctionArgumentList, ParserError> {
+    fn parse_function_argument_list(
+        &mut self,
+    ) -> Result<(FunctionArgumentList, TokenWithSpan), ParserError> {
         let mut clauses = vec![];
 
         // Handle clauses that may exist with an empty argument list
@@ -19145,12 +19163,16 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        if self.consume_token(&Token::RParen) {
-            return Ok(FunctionArgumentList {
-                duplicate_treatment: None,
-                args: vec![],
-                clauses,
-            });
+        if self.peek_token_ref() == &Token::RParen {
+            let rparen = self.expect_token(&Token::RParen)?;
+            return Ok((
+                FunctionArgumentList {
+                    duplicate_treatment: None,
+                    args: vec![],
+                    clauses,
+                },
+                rparen,
+            ));
         }
 
         let duplicate_treatment = self.parse_duplicate_treatment()?;
@@ -19208,12 +19230,15 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        self.expect_token(&Token::RParen)?;
-        Ok(FunctionArgumentList {
-            duplicate_treatment,
-            args,
-            clauses,
-        })
+        let rparen = self.expect_token(&Token::RParen)?;
+        Ok((
+            FunctionArgumentList {
+                duplicate_treatment,
+                args,
+                clauses,
+            },
+            rparen,
+        ))
     }
 
     fn parse_json_null_clause(&mut self) -> Option<JsonNullClause> {
