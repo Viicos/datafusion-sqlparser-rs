@@ -790,6 +790,7 @@ impl fmt::Display for TokenWithSpan {
 
 /// Type of tokenizer errors.
 #[derive(Debug, Clone, PartialOrd, Ord, Hash, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum TokenizerErrorType {
     /// A sring is missing a closing quote.
@@ -802,6 +803,7 @@ pub enum TokenizerErrorType {
 
 /// An error reported by the tokenizer, with a human-readable `message` and a `location`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct TokenizerError {
     /// A descriptive error message.
