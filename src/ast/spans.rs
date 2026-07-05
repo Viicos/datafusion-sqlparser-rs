@@ -2314,6 +2314,8 @@ impl Spanned for Select {
             select_token,
             from_token,
             where_token,
+            group_token,
+            by_token,
             optimizer_hints: _,
             distinct: _, // todo
             select_modifiers: _,
@@ -2348,6 +2350,8 @@ impl Spanned for Select {
             )
             .chain(from_token.iter().map(|item| item.0.span))
             .chain(where_token.iter().map(|item| item.0.span))
+            .chain(group_token.iter().map(|item| item.0.span))
+            .chain(by_token.iter().map(|item| item.0.span))
             .chain(projection.iter().map(|item| item.span()))
             .chain(into.iter().map(|item| item.span()))
             .chain(from.iter().map(|item| item.span()))

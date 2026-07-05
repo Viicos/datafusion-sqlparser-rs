@@ -449,6 +449,10 @@ pub struct Select {
     pub from_token: Option<AttachedToken>,
     /// Token for the `WHERE` keyword
     pub where_token: Option<AttachedToken>,
+    /// Token for the `GROUP` keyword, if a `GROUP BY` clause is present
+    pub group_token: Option<AttachedToken>,
+    /// Token for the `BY` keyword of the `GROUP BY` clause
+    pub by_token: Option<AttachedToken>,
     /// Query optimizer hints
     ///
     /// [MySQL](https://dev.mysql.com/doc/refman/8.4/en/optimizer-hints.html)

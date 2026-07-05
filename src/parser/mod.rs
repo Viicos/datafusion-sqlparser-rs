@@ -10795,7 +10795,9 @@ impl<'a> Parser<'a> {
         self.expect_token(&Token::LParen)?;
         self.expect_keyword_is(Keyword::SELECT)?;
         let projection = self.parse_projection()?;
-        let group_by = self.parse_optional_group_by()?;
+        let group_by = self
+            .parse_optional_group_by()?
+            .map(|(_, _, group_by)| group_by);
         let order_by = self.parse_optional_order_by()?;
         self.expect_token(&Token::RParen)?;
         Ok(ProjectionSelect {
@@ -13608,13 +13610,25 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse an optional `GROUP BY` clause, returning `Some(GroupByExpr)` when present.
-    pub fn parse_optional_group_by(&mut self) -> Result<Option<GroupByExpr>, ParserError> {
-        if self.parse_keywords(&[Keyword::GROUP, Keyword::BY]) {
+    /// Parse an optional `GROUP BY` clause, returning the `GROUP` and `BY` keyword tokens
+    /// alongside the `GroupByExpr` when present.
+    pub fn parse_optional_group_by(
+        &mut self,
+    ) -> Result<Option<(AttachedToken, AttachedToken, GroupByExpr)>, ParserError> {
+        if self.peek_keywords(&[Keyword::GROUP, Keyword::BY]) {
+            let group_token = AttachedToken(self.expect_keyword(Keyword::GROUP)?);
+            let by_token = AttachedToken(self.expect_keyword(Keyword::BY)?);
             let expressions = if self.parse_keyword(Keyword::ALL) {
                 None
             } else {
-                Some(self.parse_comma_separated(Parser::parse_group_by_expr)?)
+                Some(
+                    self.parse_comma_separated_with_trailing_commas_ignore_errors(
+                        Parser::parse_group_by_expr,
+                        self.options.trailing_commas,
+                        Self::is_reserved_for_column_alias,
+                        false,
+                    ),
+                )
             };
 
             let mut modifiers = vec![];
@@ -13659,7 +13673,7 @@ impl<'a> Parser<'a> {
                 None => GroupByExpr::All(modifiers),
                 Some(exprs) => GroupByExpr::Expressions(exprs, modifiers),
             };
-            Ok(Some(group_by))
+            Ok(Some((group_token, by_token, group_by)))
         } else {
             Ok(None)
         }
@@ -15248,6 +15262,8 @@ impl<'a> Parser<'a> {
                 select_token: None,
                 from_token: None,
                 where_token: None,
+                group_token: None,
+                by_token: None,
                 optimizer_hints: vec![],
                 distinct: None,
                 select_modifiers: None,
@@ -15366,6 +15382,8 @@ impl<'a> Parser<'a> {
                     select_token: None,
                     from_token: Some(AttachedToken(from_token)),
                     where_token: None,
+                    group_token: None,
+                    by_token: None,
                     optimizer_hints: vec![],
                     distinct: None,
                     select_modifiers: None,
@@ -15518,9 +15536,12 @@ impl<'a> Parser<'a> {
 
         let connect_by = self.maybe_parse_connect_by()?;
 
-        let group_by = self
-            .parse_optional_group_by()?
-            .unwrap_or_else(|| GroupByExpr::Expressions(vec![], vec![]));
+        let (group_token, by_token, group_by) = match self.parse_optional_group_by()? {
+            Some((group_token, by_token, group_by)) => {
+                (Some(group_token), Some(by_token), group_by)
+            }
+            None => (None, None, GroupByExpr::Expressions(vec![], vec![])),
+        };
 
         let cluster_by = if self.parse_keywords(&[Keyword::CLUSTER, Keyword::BY]) {
             self.parse_comma_separated(Parser::parse_expr)?
@@ -15574,6 +15595,8 @@ impl<'a> Parser<'a> {
             select_token: select_token.map(AttachedToken),
             from_token: None,
             where_token: where_token.map(AttachedToken),
+            group_token,
+            by_token,
             optimizer_hints,
             distinct,
             select_modifiers,
