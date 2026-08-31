@@ -494,6 +494,12 @@ pub struct Array {
 
     /// `true` for  `ARRAY[..]`, `false` for `[..]`
     pub named: bool,
+
+    /// The opening `[` bracket.
+    pub opening_bracket: AttachedToken,
+
+    /// The closing `]` bracket.
+    pub closing_bracket: AttachedToken,
 }
 
 impl fmt::Display for Array {

@@ -1690,8 +1690,8 @@ impl<'a> Parser<'a> {
             Keyword::INTERVAL => Ok(Some(self.parse_interval()?)),
             // Treat ARRAY[1,2,3] as an array [1,2,3], otherwise try as subquery or a function call
             Keyword::ARRAY if *self.peek_token_ref() == Token::LBracket => {
-                self.expect_token(&Token::LBracket)?;
-                Ok(Some(self.parse_array_expr(true)?))
+                let opening_bracket = self.expect_token(&Token::LBracket)?;
+                Ok(Some(self.parse_array_expr(true, opening_bracket)?))
             }
             Keyword::ARRAY
             if self.peek_token_ref().token == Token::LParen
@@ -1985,7 +1985,10 @@ impl<'a> Parser<'a> {
                 }
             } // End of Token::Word
             // array `[1, 2, 3]`
-            Token::LBracket => self.parse_array_expr(false),
+            Token::LBracket => {
+                let opening_bracket = next_token.clone();
+                self.parse_array_expr(false, opening_bracket)
+            }
             tok @ Token::Minus | tok @ Token::Plus => {
                 let op = if *tok == Token::Plus {
                     UnaryOperator::Plus
@@ -3238,10 +3241,19 @@ impl<'a> Parser<'a> {
 
     /// Parses an array expression `[ex1, ex2, ..]`
     /// if `named` is `true`, came from an expression like  `ARRAY[ex1, ex2]`
-    pub fn parse_array_expr(&mut self, named: bool) -> Result<Expr, ParserError> {
+    pub fn parse_array_expr(
+        &mut self,
+        named: bool,
+        opening_bracket: TokenWithSpan,
+    ) -> Result<Expr, ParserError> {
         let exprs = self.parse_comma_separated0(Parser::parse_expr, Token::RBracket)?;
-        self.expect_token(&Token::RBracket)?;
-        Ok(Expr::Array(Array { elem: exprs, named }))
+        let closing_bracket = self.expect_token(&Token::RBracket)?;
+        Ok(Expr::Array(Array {
+            elem: exprs,
+            named,
+            opening_bracket: opening_bracket.into(),
+            closing_bracket: closing_bracket.into(),
+        }))
     }
 
     /// Parse the `ON OVERFLOW` clause for `LISTAGG`.

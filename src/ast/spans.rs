@@ -1754,11 +1754,14 @@ impl Spanned for ObjectNamePart {
 impl Spanned for Array {
     fn span(&self) -> Span {
         let Array {
-            elem,
-            named: _, // bool
+            opening_bracket,
+            closing_bracket,
+            ..
         } = self;
 
-        union_spans(elem.iter().map(|i| i.span()))
+        // The element spans miss the surrounding brackets (and are empty for
+        // `[]`), so span the literal by its brackets.
+        opening_bracket.0.span.union(&closing_bracket.0.span)
     }
 }
 
