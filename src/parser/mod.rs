@@ -4535,11 +4535,12 @@ impl<'a> Parser<'a> {
         self.expect_token(&Token::LParen)?;
         let in_op = match self.maybe_parse(|p| p.parse_query())? {
             Some(subquery) => {
-                self.expect_token(&Token::RParen)?;
+                let r_paren = self.expect_token(&Token::RParen)?;
                 Expr::InSubquery {
                     expr: Box::new(expr),
                     subquery,
                     negated,
+                    closing_paren: r_paren.into(),
                 }
             }
             None => {

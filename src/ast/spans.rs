@@ -1522,7 +1522,11 @@ impl Spanned for Expr {
                 expr,
                 subquery,
                 negated: _,
-            } => expr.span().union(&subquery.span()),
+                closing_paren,
+            } => expr
+                .span()
+                .union(&subquery.span())
+                .union(&closing_paren.0.span),
             Expr::InUnnest {
                 expr,
                 array_expr,

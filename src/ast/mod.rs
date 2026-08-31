@@ -983,6 +983,8 @@ pub enum Expr {
         subquery: Box<Query>,
         /// `true` when the `NOT` modifier is present.
         negated: bool,
+        /// The `)` closing the subquery.
+        closing_paren: AttachedToken,
     },
     /// `[ NOT ] IN UNNEST(array_expression)`
     InUnnest {
@@ -1784,6 +1786,7 @@ impl fmt::Display for Expr {
                 expr,
                 subquery,
                 negated,
+                ..
             } => write!(
                 f,
                 "{} {}IN ({})",
