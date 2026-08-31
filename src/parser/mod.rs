@@ -2088,36 +2088,48 @@ impl<'a> Parser<'a> {
                 Ok(Expr::Value(self.parse_value()?))
             }
             Token::LParen => {
-                let expr =
-                    if let Some(expr) = self.try_parse_expr_sub_query()? {
-                        expr
-                    } else if let Some(lambda) = self.try_parse_lambda()? {
-                        return Ok(lambda);
-                    } else {
-                        // Parentheses in expressions switch to "normal" parsing state.
-                        // This matters for dialects (SQLite, DuckDB) where `NOT NULL` can
-                        // be an alias for `IS NOT NULL`. In column definitions like:
-                        //
-                        //   CREATE TABLE t (c INT DEFAULT (42 NOT NULL) NOT NULL)
-                        //
-                        // The `(42 NOT NULL)` is an expression with parens, so it parses
-                        // as `IsNotNull(42)`. The trailing `NOT NULL` is outside those
-                        // expression parens (the outer parens are CREATE TABLE syntax),
-                        // so it remains a column constraint.
-                        let exprs = self.with_state(ParserState::Normal, |p| {
-                            p.parse_comma_separated(Parser::parse_expr)
-                        })?;
-                        match exprs.len() {
-                            0 => return Err(ParserError::ParserError(
-                                "Internal parser error: parse_comma_separated returned empty list"
-                                    .to_string(),
-                            )),
-                            1 => Expr::Nested(Box::new(exprs.into_iter().next().unwrap())),
-                            _ => Expr::Tuple(exprs),
+                // Capture the opening parenthesis so a nested expression can span
+                // its own parentheses (see `Expr::Nested`).
+                let l_paren = next_token.clone();
+                if let Some(expr) = self.try_parse_expr_sub_query()? {
+                    self.expect_token(&Token::RParen)?;
+                    Ok(expr)
+                } else if let Some(lambda) = self.try_parse_lambda()? {
+                    Ok(lambda)
+                } else {
+                    // Parentheses in expressions switch to "normal" parsing state.
+                    // This matters for dialects (SQLite, DuckDB) where `NOT NULL` can
+                    // be an alias for `IS NOT NULL`. In column definitions like:
+                    //
+                    //   CREATE TABLE t (c INT DEFAULT (42 NOT NULL) NOT NULL)
+                    //
+                    // The `(42 NOT NULL)` is an expression with parens, so it parses
+                    // as `IsNotNull(42)`. The trailing `NOT NULL` is outside those
+                    // expression parens (the outer parens are CREATE TABLE syntax),
+                    // so it remains a column constraint.
+                    let exprs = self.with_state(ParserState::Normal, |p| {
+                        p.parse_comma_separated(Parser::parse_expr)
+                    })?;
+                    match exprs.len() {
+                        0 => Err(ParserError::ParserError(
+                            "Internal parser error: parse_comma_separated returned empty list"
+                                .to_string(),
+                        )),
+                        1 => {
+                            let content = Box::new(exprs.into_iter().next().unwrap());
+                            let r_paren = self.expect_token(&Token::RParen)?;
+                            Ok(Expr::Nested(Parens {
+                                opening_token: l_paren.into(),
+                                content,
+                                closing_token: r_paren.into(),
+                            }))
                         }
-                    };
-                self.expect_token(&Token::RParen)?;
-                Ok(expr)
+                        _ => {
+                            self.expect_token(&Token::RParen)?;
+                            Ok(Expr::Tuple(exprs))
+                        }
+                    }
+                }
             }
             Token::Placeholder(_) | Token::Colon | Token::AtSign => {
                 self.prev_token();

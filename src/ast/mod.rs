@@ -1236,7 +1236,7 @@ pub enum Expr {
         collation: ObjectName,
     },
     /// Nested expression e.g. `(foo > bar)` or `(1)`
-    Nested(Box<Expr>),
+    Nested(Parens<Box<Expr>>),
     /// A literal value, such as string, number, date or NULL
     Value(ValueWithSpan),
     /// Prefixed expression, e.g. introducer strings, projection prefix
@@ -2034,7 +2034,7 @@ impl fmt::Display for Expr {
             },
             Expr::Position { expr, r#in } => write!(f, "POSITION({expr} IN {in})"),
             Expr::Collate { expr, collation } => write!(f, "{expr} COLLATE {collation}"),
-            Expr::Nested(ast) => write!(f, "({ast})"),
+            Expr::Nested(ast) => write!(f, "({})", ast.content),
             Expr::Value(v) => write!(f, "{v}"),
             Expr::Prefixed { prefix, value } => write!(f, "{prefix} {value}"),
             Expr::TypedString(ts) => ts.fmt(f),
