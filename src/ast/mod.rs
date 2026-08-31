@@ -965,6 +965,9 @@ pub enum Expr {
         list: Vec<Expr>,
         /// `true` when the `NOT` modifier is present.
         negated: bool,
+        /// The `)` closing the value list. `None` for dialects that permit an
+        /// unparenthesized `IN` operand (e.g. `x IN 1`).
+        closing_paren: Option<AttachedToken>,
     },
     /// `[ NOT ] IN (SELECT ...)`
     InSubquery {
@@ -1763,6 +1766,7 @@ impl fmt::Display for Expr {
                 expr,
                 list,
                 negated,
+                ..
             } => write!(
                 f,
                 "{} {}IN ({})",

@@ -1506,9 +1506,18 @@ impl Spanned for Expr {
                 expr,
                 list,
                 negated: _,
-            } => union_spans(
-                core::iter::once(expr.span()).chain(list.iter().map(|item| item.span())),
-            ),
+                closing_paren,
+            } => {
+                let base = union_spans(
+                    core::iter::once(expr.span()).chain(list.iter().map(|item| item.span())),
+                );
+                // The value-list span stops at the last element, so extend it to
+                // the closing parenthesis when the list is parenthesized.
+                match closing_paren {
+                    Some(closing_paren) => base.union(&closing_paren.0.span),
+                    None => base,
+                }
+            }
             Expr::InSubquery {
                 expr,
                 subquery,

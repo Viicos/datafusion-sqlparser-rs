@@ -4517,26 +4517,36 @@ impl<'a> Parser<'a> {
                 expr: Box::new(expr),
                 list: vec![self.parse_expr()?],
                 negated,
+                closing_paren: None,
             });
         }
         self.expect_token(&Token::LParen)?;
         let in_op = match self.maybe_parse(|p| p.parse_query())? {
-            Some(subquery) => Expr::InSubquery {
-                expr: Box::new(expr),
-                subquery,
-                negated,
-            },
-            None => Expr::InList {
-                expr: Box::new(expr),
-                list: if self.dialect.supports_in_empty_list() {
+            Some(subquery) => {
+                self.expect_token(&Token::RParen)?;
+                Expr::InSubquery {
+                    expr: Box::new(expr),
+                    subquery,
+                    negated,
+                }
+            }
+            None => {
+                let list = if self.dialect.supports_in_empty_list() {
                     self.parse_comma_separated0(Parser::parse_expr, Token::RParen)?
                 } else {
                     self.parse_comma_separated(Parser::parse_expr)?
-                },
-                negated,
-            },
+                };
+                // Capture the closing parenthesis so the `InList` spans its own
+                // value list (its span otherwise stops at the last element).
+                let r_paren = self.expect_token(&Token::RParen)?;
+                Expr::InList {
+                    expr: Box::new(expr),
+                    list,
+                    negated,
+                    closing_paren: Some(r_paren.into()),
+                }
+            }
         };
-        self.expect_token(&Token::RParen)?;
         Ok(in_op)
     }
 
