@@ -15291,7 +15291,13 @@ impl<'a> Parser<'a> {
         } else if self.parse_keyword(Keyword::TABLE) {
             SetExpr::Table(Box::new(self.parse_as_table()?))
         } else {
-            self.add_error(ParseErrorType::ExpectedQueryBody, self.peek_token().span);
+            let found = self.peek_token();
+            let span = if found.token == Token::EOF {
+                self.get_current_token().span
+            } else {
+                found.span
+            };
+            self.add_error(ParseErrorType::ExpectedQueryBody, span);
 
             SetExpr::Select(Box::new(Select {
                 select_token: None,
@@ -15444,7 +15450,7 @@ impl<'a> Parser<'a> {
                     flavor: SelectFlavor::FromFirstNoSelect,
                 });
             }
-            from_first = Some(from);
+            from_first = Some((from_token, from));
         }
 
         let select_token = self.expect_keyword_or_error(Keyword::SELECT);
@@ -15499,12 +15505,14 @@ impl<'a> Parser<'a> {
         // otherwise they may be parsed as an alias as part of the `projection`
         // or `from`.
 
-        let (from, from_first) = if let Some(from) = from_first.take() {
-            (from, true)
-        } else if self.parse_keyword(Keyword::FROM) {
-            (self.parse_table_with_joins()?, false)
+        let (from_token, from, from_first) = if let Some((from_token, from)) = from_first.take()
+        {
+            (Some(from_token), from, true)
+        } else if self.peek_keyword(Keyword::FROM) {
+            let from_token = self.expect_keyword(Keyword::FROM)?;
+            (Some(from_token), self.parse_table_with_joins()?, false)
         } else {
-            (vec![], false)
+            (None, vec![], false)
         };
 
         let mut lateral_views = vec![];
@@ -15628,7 +15636,7 @@ impl<'a> Parser<'a> {
 
         Ok(Select {
             select_token: select_token.map(AttachedToken),
-            from_token: None,
+            from_token: from_token.map(AttachedToken),
             where_token: where_token.map(AttachedToken),
             group_token,
             by_token,
