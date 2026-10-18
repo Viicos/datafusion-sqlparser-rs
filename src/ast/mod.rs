@@ -7962,9 +7962,9 @@ pub enum FunctionArgExpr {
     /// A normal expression argument.
     Expr(Expr),
     /// Qualified wildcard, e.g. `alias.*` or `schema.table.*`.
-    QualifiedWildcard(ObjectName),
+    QualifiedWildcard(ObjectName, AttachedToken),
     /// An unqualified `*` wildcard.
-    Wildcard,
+    Wildcard(AttachedToken),
     /// An unqualified `*` wildcard with additional options, e.g. `* EXCLUDE(col)`.
     ///
     /// Used in Snowflake to support expressions like `HASH(* EXCLUDE(col))`.
@@ -7974,8 +7974,8 @@ pub enum FunctionArgExpr {
 impl From<Expr> for FunctionArgExpr {
     fn from(wildcard_expr: Expr) -> Self {
         match wildcard_expr {
-            Expr::QualifiedWildcard(prefix, _) => Self::QualifiedWildcard(prefix),
-            Expr::Wildcard(_) => Self::Wildcard,
+            Expr::QualifiedWildcard(prefix, token) => Self::QualifiedWildcard(prefix, token),
+            Expr::Wildcard(token) => Self::Wildcard(token),
             expr => Self::Expr(expr),
         }
     }
@@ -7985,8 +7985,8 @@ impl fmt::Display for FunctionArgExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             FunctionArgExpr::Expr(expr) => write!(f, "{expr}"),
-            FunctionArgExpr::QualifiedWildcard(prefix) => write!(f, "{prefix}.*"),
-            FunctionArgExpr::Wildcard => f.write_str("*"),
+            FunctionArgExpr::QualifiedWildcard(prefix, _) => write!(f, "{prefix}.*"),
+            FunctionArgExpr::Wildcard(_) => f.write_str("*"),
             FunctionArgExpr::WildcardWithOptions(opts) => write!(f, "*{opts}"),
         }
     }

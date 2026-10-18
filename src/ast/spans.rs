@@ -2203,20 +2203,19 @@ impl Spanned for FunctionArg {
     }
 }
 
-/// # partial span
-///
-/// Missing spans:
-/// - [FunctionArgExpr::Wildcard]
-/// - [FunctionArgExpr::WildcardWithOptions]
 impl Spanned for FunctionArgExpr {
     fn span(&self) -> Span {
         match self {
             FunctionArgExpr::Expr(expr) => expr.span(),
-            FunctionArgExpr::QualifiedWildcard(object_name) => {
-                union_spans(object_name.0.iter().map(|i| i.span()))
-            }
-            FunctionArgExpr::Wildcard => Span::empty(),
-            FunctionArgExpr::WildcardWithOptions(_) => Span::empty(),
+            FunctionArgExpr::QualifiedWildcard(object_name, token) => union_spans(
+                object_name
+                    .0
+                    .iter()
+                    .map(|i| i.span())
+                    .chain(iter::once(token.0.span)),
+            ),
+            FunctionArgExpr::Wildcard(token) => token.0.span,
+            FunctionArgExpr::WildcardWithOptions(opts) => opts.span(),
         }
     }
 }
@@ -2793,6 +2792,27 @@ pub mod tests {
             test.get_source(expr_span),
             "CASE 1 WHEN 2 THEN 3 ELSE 4 END"
         );
+    }
+
+    #[test]
+    fn test_wildcard_function_arg_span() {
+        for (dialect, sql, expected) in [
+            (&GenericDialect as &dyn Dialect, "count(*)", "*"),
+            (&GenericDialect, "count(t.*)", "t.*"),
+            (&SnowflakeDialect, "HASH(* EXCLUDE a)", "* EXCLUDE a"),
+        ] {
+            let mut test = SpanTest::new(dialect, sql);
+            let Expr::Function(function) = test.0.parse_expr().unwrap() else {
+                panic!("{sql} is not a function call");
+            };
+            let FunctionArguments::List(list) = function.args else {
+                panic!("{sql} has no argument list");
+            };
+            let FunctionArg::Unnamed(arg) = &list.args[0] else {
+                panic!("{sql} has no unnamed argument");
+            };
+            assert_eq!(test.get_source(arg.span()), expected, "{sql}");
+        }
     }
 
     #[test]

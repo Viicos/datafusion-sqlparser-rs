@@ -1383,7 +1383,9 @@ fn parse_select_count_wildcard() {
             parameters: FunctionArguments::None,
             args: FunctionArguments::List(FunctionArgumentList {
                 duplicate_treatment: None,
-                args: vec![FunctionArg::Unnamed(FunctionArgExpr::Wildcard)],
+                args: vec![FunctionArg::Unnamed(FunctionArgExpr::Wildcard(
+                    AttachedToken::empty()
+                ))],
                 clauses: vec![],
             }),
             null_treatment: None,
@@ -3088,7 +3090,9 @@ fn parse_select_having() {
                 parameters: FunctionArguments::None,
                 args: FunctionArguments::List(FunctionArgumentList {
                     duplicate_treatment: None,
-                    args: vec![FunctionArg::Unnamed(FunctionArgExpr::Wildcard)],
+                    args: vec![FunctionArg::Unnamed(FunctionArgExpr::Wildcard(
+                        AttachedToken::empty()
+                    ))],
                     clauses: vec![],
                 }),
                 null_treatment: None,
