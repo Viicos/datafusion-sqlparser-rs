@@ -47,7 +47,8 @@ use super::{
     ReplaceSelectItem, Select, SelectInto, SelectItem, SetExpr, SqlOption, Statement, Subscript,
     SymbolDefinition, TableAlias, TableAliasColumnDef, TableConstraint, TableFactor, TableObject,
     TableOptionsClustered, TableWithJoins, Update, UpdateTableFromKind, Use, Values, ViewColumnDef,
-    WhileStatement, WildcardAdditionalOptions, With, WithFill,
+    WhileStatement, WildcardAdditionalOptions, WindowFrame, WindowFrameBound, WindowSpec,
+    WindowType, With, WithFill,
 };
 
 /// Given an iterator of spans, return the [Span::union] of all spans.
@@ -1778,7 +1779,7 @@ impl Spanned for Function {
             args,
             filter,
             null_treatment: _, // enum
-            over: _,           // todo
+            over,
             within_group,
         } = self;
 
@@ -1789,8 +1790,78 @@ impl Spanned for Function {
                 .chain(iter::once(args.span()))
                 .chain(iter::once(parameters.span()))
                 .chain(filter.iter().map(|i| i.span()))
+                .chain(over.iter().map(|i| i.span()))
                 .chain(within_group.iter().map(|i| i.span())),
         )
+    }
+}
+
+/// # partial span
+///
+/// see Spanned impl for WindowSpec for more information
+impl Spanned for WindowType {
+    fn span(&self) -> Span {
+        match self {
+            WindowType::WindowSpec(spec) => spec.span(),
+            WindowType::NamedWindow(ident) => ident.span,
+        }
+    }
+}
+
+/// # partial span
+///
+/// Missing spans:
+/// - The enclosing parentheses, and the `PARTITION BY` and `ORDER BY` keywords. The span
+///   of an empty window specification (`OVER ()`) is empty.
+/// - The keywords of the window frame, see Spanned impl for WindowFrame.
+impl Spanned for WindowSpec {
+    fn span(&self) -> Span {
+        let WindowSpec {
+            window_name,
+            partition_by,
+            order_by,
+            window_frame,
+        } = self;
+
+        union_spans(
+            window_name
+                .iter()
+                .map(|i| i.span)
+                .chain(partition_by.iter().map(|i| i.span()))
+                .chain(order_by.iter().map(|i| i.span()))
+                .chain(window_frame.iter().map(|i| i.span())),
+        )
+    }
+}
+
+/// # partial span
+///
+/// Only the expressions of the bounds are covered (e.g. the `1` in `ROWS 1 PRECEDING`).
+/// The span of a frame with no such expression (e.g.
+/// `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`) is empty.
+impl Spanned for WindowFrame {
+    fn span(&self) -> Span {
+        let WindowFrame {
+            units: _, // enum
+            start_bound,
+            end_bound,
+        } = self;
+
+        union_spans(iter::once(start_bound.span()).chain(end_bound.iter().map(|i| i.span())))
+    }
+}
+
+/// # partial span
+///
+/// see Spanned impl for WindowFrame for more information
+impl Spanned for WindowFrameBound {
+    fn span(&self) -> Span {
+        match self {
+            WindowFrameBound::CurrentRow => Span::empty(),
+            WindowFrameBound::Preceding(expr) | WindowFrameBound::Following(expr) => {
+                expr.as_ref().map_or(Span::empty(), |e| e.span())
+            }
+        }
     }
 }
 
