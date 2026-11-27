@@ -20698,6 +20698,13 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Record the missing expression after the `BY` keyword that was just parsed.
+    fn add_missing_window_expression_error(&mut self) {
+        if let Some(span) = self.last_non_ws_token().map(|t| t.span) {
+            self.add_error(ParseErrorType::ExpectedExpression, span);
+        }
+    }
+
     /// Parse a window specification.
     pub fn parse_window_spec(&mut self) -> Result<WindowSpec, ParserError> {
         let window_name = match &self.peek_token_ref().token {
@@ -20707,13 +20714,25 @@ impl<'a> Parser<'a> {
             _ => None,
         };
 
+        // The `PARTITION BY` and `ORDER BY` lists are error tolerant: an empty list
+        // (e.g. `OVER (ORDER BY )`) is recorded as an error and parsed as no expression.
         let partition_by = if self.parse_keywords(&[Keyword::PARTITION, Keyword::BY]) {
-            self.parse_comma_separated(Parser::parse_expr)?
+            if self.peek_token_ref().token == Token::RParen || self.peek_keyword(Keyword::ORDER) {
+                self.add_missing_window_expression_error();
+                vec![]
+            } else {
+                self.parse_comma_separated(Parser::parse_expr)?
+            }
         } else {
             vec![]
         };
         let order_by = if self.parse_keywords(&[Keyword::ORDER, Keyword::BY]) {
-            self.parse_comma_separated(Parser::parse_order_by_expr)?
+            if self.peek_token_ref().token == Token::RParen {
+                self.add_missing_window_expression_error();
+                vec![]
+            } else {
+                self.parse_comma_separated(Parser::parse_order_by_expr)?
+            }
         } else {
             vec![]
         };
